@@ -1,4 +1,4 @@
-FROM huggingface/text-generation-inference:1.3.0
+FROM ghcr.io/huggingface/text-generation-inference:3.0.2
 
 # Install additional requirements
 COPY app/requirements.txt /requirements.txt
