@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
@@ -57,41 +57,55 @@ class WeightedAdapterHandler:
     
     def __call__(self, inputs: Dict):
         """Handle inference request"""
-        # Extract parameters
+        # Primary fields
         prompt = inputs.get("inputs", "")
         voice_weights = inputs.get("voice_weights", {
-            "davinci": 1.0,  # Default to pure davinci voice
+            "davinci": 1.0,  # default
             "davinci-instruct": 0.0,
             "text-davinci": 0.0,
             "opus-calm": 0.0,
             "opus-manic": 0.0
         })
-        max_length = inputs.get("max_length", 100)
-        temperature = inputs.get("temperature", 0.7)
-        top_p = inputs.get("top_p", 0.9)
         
-        # Load model if not loaded
+        # If the caller provided a "parameters" block, read from there; else fall back to top-level.
+        parameters = inputs.get("parameters", {})
+        
+        # "max_length" or "max_new_tokens"
+        #  - If present in 'parameters', it's 'max_new_tokens'
+        #  - Otherwise fallback to top-level 'max_length'
+        max_length = parameters.get("max_new_tokens")
+        if max_length is None:
+            max_length = inputs.get("max_length", 100)
+        
+        # Temperature
+        temperature = parameters.get("temperature", inputs.get("temperature", 0.7))
+        
+        # top_p
+        top_p = parameters.get("top_p", inputs.get("top_p", 0.9))
+        
+        # Load model if not already loaded
         if self.model is None:
             self.load_model()
             self.apply_voice_adapters(voice_weights)
+            # Merge and unload means we physically bake in the LoRAs so we can drop them from memory
             self.model = self.model.merge_and_unload()
         
-        # Tokenize input
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        # Tokenize
+        tokenized = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         
-        # Generate response
+        # Generate
         outputs = self.model.generate(
-            **inputs,
+            **tokenized,
             max_new_tokens=max_length,
             temperature=temperature,
             top_p=top_p,
             do_sample=True
         )
         
-        # Decode and return response
-        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Decode
+        response_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        return {"generated_text": response}
+        return {"generated_text": response_text}
 
 # Initialize handler
 handler = WeightedAdapterHandler()
